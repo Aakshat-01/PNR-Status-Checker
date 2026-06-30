@@ -124,7 +124,7 @@ function App() {
   return (
     <div className="container">
       <div className="icon">🚆</div>
-      <div className="top-text">PNR Status (React)</div>
+      <div className="top-text">Trackoraa</div>
       <h1>PNR Status</h1>
       <p className="subtitle">Enter your PNR number to check train status</p>
 
