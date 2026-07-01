@@ -5,7 +5,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [data, setData] = useState(null);
-  
+
   // Modal popup state
   const [showPopup, setShowPopup] = useState(false);
   const [popupMessage, setPopupMessage] = useState('');
@@ -35,12 +35,25 @@ function App() {
         setData({
           TrainName: "Mumbai Rajdhani Express",
           TrainNo: "12951",
+          DateOfJourney: "Feb 9, 2025 11:30:05 AM",
           SourceName: "Mumbai Central (MMCT)",
           DestinationName: "New Delhi (NDLS)",
-          ChartPrepared: true,
+          ChartPrepared: "Chart Prepared",
           PassengerStatus: [
-            {"Coach": "A1", "Berth": "22 (Lower)", "CurrentStatus": "CNF"},
-            {"Coach": "A1", "Berth": "24 (Upper)", "CurrentStatus": "CNF"}
+            {
+              SerialNumber: 1,
+              Coach: "A1",
+              CurrentStatusDetails: "CNF 22",
+              BookingStatusDetails: "CNF 22",
+              CurrentStatusCode: "CNF"
+            },
+            {
+              SerialNumber: 2,
+              Coach: "A1",
+              CurrentStatusDetails: "CNF 24",
+              BookingStatusDetails: "CNF 24",
+              CurrentStatusCode: "CNF"
+            }
           ]
         });
         setLoading(false);
@@ -66,7 +79,7 @@ function App() {
           setError(result.message || "Failed to retrieve PNR status.");
         } else {
           const rawData = result.data ? result.data : result;
-          
+
           // Helper function to resolve key case-insensitively
           const getKeyCI = (obj, ...keys) => {
             if (!obj || typeof obj !== 'object') return null;
@@ -84,20 +97,69 @@ function App() {
           const mappedData = {
             TrainName: getKeyCI(rawData, "TrainName", "trainName", "train_name"),
             TrainNo: getKeyCI(rawData, "TrainNo", "trainNo", "trainNumber", "train_number"),
-            SourceName: getKeyCI(rawData, "SourceName", "sourceName", "from", "from_station", "source_name"),
-            DestinationName: getKeyCI(rawData, "DestinationName", "destinationName", "to", "to_station", "destination_name"),
-            ChartPrepared: getKeyCI(rawData, "ChartPrepared", "chartPrepared", "chart_prepared"),
+            DateOfJourney: getKeyCI(
+              rawData,
+              "DateOfJourney", "dateOfJourney", "date_of_journey", "doj"
+            ),
+            SourceName: getKeyCI(
+              rawData,
+              "SourceName", "sourceName", "sourceStation",
+              "from", "from_station", "source_name"
+            ),
+            DestinationName: getKeyCI(
+              rawData,
+              "DestinationName", "destinationName", "destinationStation",
+              "to", "to_station", "destination_name"
+            ),
+            // API returns a string like "Chart Prepared" / "Chart Not Prepared",
+            // not a boolean, so we keep it as-is and check it in the render.
+            ChartPrepared: getKeyCI(
+              rawData,
+              "ChartPrepared", "chartPrepared", "chartStatus", "chart_prepared"
+            ),
           };
 
-          const passengersRaw = getKeyCI(rawData, "PassengerStatus", "passengerStatus", "passengers", "passenger_status");
+          const passengersRaw = getKeyCI(
+            rawData,
+            "PassengerStatus", "passengerStatus", "passengers",
+            "passengerList", "passenger_status"
+          );
+
           const passengers = [];
           if (Array.isArray(passengersRaw)) {
             for (let p of passengersRaw) {
               if (p && typeof p === 'object') {
+                const serialNumber = getKeyCI(
+                  p, "SerialNumber", "serialNumber", "passengerSerialNumber", "serial_number"
+                );
+                const coach = getKeyCI(
+                  p, "Coach", "coach", "currentCoachId", "bookingCoachId"
+                );
+
+                // Prefer a pre-built detail string from the API (e.g. "RAC 36"),
+                // otherwise construct one from the status code + berth number.
+                const currentStatusCode = getKeyCI(
+                  p, "CurrentStatus", "currentStatus", "status", "current_status"
+                );
+                const currentBerth = getKeyCI(
+                  p, "Berth", "berth", "seat", "currentBerthNo"
+                );
+                const currentStatusDetails = getKeyCI(
+                  p, "CurrentStatusDetails", "currentStatusDetails"
+                ) || [currentStatusCode, currentBerth].filter(Boolean).join(" ");
+
+                const bookingStatusCode = getKeyCI(p, "bookingStatus");
+                const bookingBerth = getKeyCI(p, "bookingBerthNo");
+                const bookingStatusDetails = getKeyCI(
+                  p, "BookingStatusDetails", "bookingStatusDetails"
+                ) || [bookingStatusCode, bookingBerth].filter(Boolean).join(" ");
+
                 passengers.push({
-                  Coach: getKeyCI(p, "Coach", "coach"),
-                  Berth: getKeyCI(p, "Berth", "berth", "seat", "seatNumber", "seat_number"),
-                  CurrentStatus: getKeyCI(p, "CurrentStatus", "currentStatus", "status", "current_status")
+                  SerialNumber: serialNumber || null,
+                  Coach: coach || null,
+                  CurrentStatusCode: currentStatusCode || null,
+                  CurrentStatusDetails: currentStatusDetails || null,
+                  BookingStatusDetails: bookingStatusDetails || null
                 });
               }
             }
@@ -112,13 +174,25 @@ function App() {
       } else if (response.status >= 500) {
         setError("Server error. Please try again later.");
       } else {
-        setError(`Unexpected error (Code: {response.status})`);
+        setError(`Unexpected error (Code: ${response.status})`);
       }
     } catch (err) {
       setError("Something went wrong. Please check your internet connection.");
     } finally {
       setLoading(false);
     }
+  };
+
+  // Maps a raw status code (CNF, RAC, WL, CAN, etc.) to a friendly
+  // sub-label and color, similar to how IRCTC apps display it.
+  const getStatusMeta = (statusCode) => {
+    if (!statusCode) return { label: '', color: '#6b7280' };
+    const code = statusCode.toUpperCase();
+    if (code.startsWith('CNF')) return { label: 'Confirmed', color: '#16a34a' };
+    if (code.startsWith('RAC')) return { label: 'Available', color: '#16a34a' };
+    if (code.startsWith('WL') || code.includes('WL')) return { label: 'Waitlisted', color: '#d97706' };
+    if (code.startsWith('CAN')) return { label: 'Cancelled', color: '#dc2626' };
+    return { label: '', color: '#6b7280' };
   };
 
   return (
@@ -131,7 +205,7 @@ function App() {
       {/* Search Form */}
       <form onSubmit={handleSearch}>
         <div className="search-box">
-          <input 
+          <input
             type="text"
             value={pnr}
             onChange={(e) => setPnr(e.target.value)}
@@ -154,21 +228,47 @@ function App() {
         <div className="result">
           <p><b>Train Name:</b> {data.TrainName || 'N/A'}</p>
           <p><b>Train Number:</b> {data.TrainNo || 'N/A'}</p>
+          <p><b>Date of Journey:</b> {data.DateOfJourney || 'N/A'}</p>
           <p><b>From:</b> {data.SourceName || 'N/A'}</p>
           <p><b>To:</b> {data.DestinationName || 'N/A'}</p>
           <p>
-            <b>PNR Status:</b> {data.ChartPrepared ? "✅ Chart Prepared" : "⏳ Chart Not Prepared"}
+            <b>PNR Status:</b>{" "}
+            {data.ChartPrepared === "Chart Prepared"
+              ? "✅ Chart Prepared"
+              : `⏳ ${data.ChartPrepared || "Not Available"}`}
           </p>
-          <h3>Passenger Details</h3>
+          <h3>Passenger Status</h3>
           {data.PassengerStatus && data.PassengerStatus.length > 0 ? (
-            data.PassengerStatus.map((p, index) => (
-              <div key={index}>
-                <p>Coach: {p.Coach || 'N/A'}</p>
-                <p>Seat: {p.Berth || 'N/A'}</p>
-                <p>Status: {p.CurrentStatus || 'N/A'}</p>
-                {index < data.PassengerStatus.length - 1 && <hr />}
-              </div>
-            ))
+            <table className="passenger-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ textAlign: 'left', color: '#6b7280', fontSize: '0.85rem' }}>
+                  <th style={{ padding: '8px 12px', fontWeight: 500 }}>S. No</th>
+                  <th style={{ padding: '8px 12px', fontWeight: 500 }}>Current Status</th>
+                  <th style={{ padding: '8px 12px', fontWeight: 500 }}>Booking Status</th>
+                  <th style={{ padding: '8px 12px', fontWeight: 500 }}>Coach</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.PassengerStatus.map((p, index) => {
+                  const meta = getStatusMeta(p.CurrentStatusCode);
+                  return (
+                    <tr key={index} style={{ borderTop: '1px solid #e5e7eb' }}>
+                      <td style={{ padding: '10px 12px' }}>{p.SerialNumber || index + 1}</td>
+                      <td style={{ padding: '10px 12px' }}>
+                        <div>{p.CurrentStatusDetails || 'N/A'}</div>
+                        {meta.label && (
+                          <div style={{ fontSize: '0.8rem', color: meta.color }}>
+                            {meta.label}
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ padding: '10px 12px' }}>{p.BookingStatusDetails || 'N/A'}</td>
+                      <td style={{ padding: '10px 12px' }}>{p.Coach || '-'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           ) : (
             <p>No passenger details found.</p>
           )}
